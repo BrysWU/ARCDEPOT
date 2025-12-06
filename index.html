@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Arc Raiders Data Explorer</title>
+  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="icon" href="data:," />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Arc Raiders — Data Explorer</h1>
+    <p class="subtitle">Interactive viewer for items, blueprints, maps, bots, trades and skill nodes (data from RaidTheory/arcraiders-data)</p>
+  </header>
+
+  <main class="container">
+    <section class="controls">
+      <label for="dataset">Dataset</label>
+      <select id="dataset" aria-label="Select dataset">
+        <option value="projects.json">projects (items & blueprints)</option>
+        <option value="bots.json">bots</option>
+        <option value="trades.json">trades</option>
+        <option value="maps.json">maps</option>
+        <option value="skillNodes.json">skillNodes</option>
+      </select>
+
+      <label for="search">Search</label>
+      <input id="search" placeholder="Search by name or id" />
+
+      <label for="filterType">Filter key/value (optional)</label>
+      <input id="filterKey" placeholder="key (e.g. rarity, tier, category)" />
+      <input id="filterValue" placeholder="value (e.g. common)" />
+
+      <div class="actions">
+        <button id="reload">Reload</button>
+        <button id="clearFilters">Clear</button>
+      </div>
+    </section>
+
+    <section class="content">
+      <aside class="list-pane">
+        <div class="list-header">
+          <div id="datasetInfo" class="dataset-info"></div>
+          <div id="listMeta" class="list-meta"></div>
+        </div>
+        <ul id="itemsList" class="items-list" role="list"></ul>
+        <div class="pagination">
+          <button id="prevPage">Previous</button>
+          <span id="pageInfo"></span>
+          <button id="nextPage">Next</button>
+        </div>
+      </aside>
+
+      <section class="detail-pane" id="detailPane">
+        <div class="detail-header">
+          <h2 id="detailTitle">Select an item</h2>
+          <div id="detailLinks" class="detail-links"></div>
+        </div>
+
+        <div id="detailBody" class="detail-body">
+          <p class="hint">Choose an entry from the list to view structured details. The viewer attempts to detect stats, blueprints/recipes, locations/drops and maps.</p>
+        </div>
+
+        <details id="rawJsonPanel" class="raw-panel">
+          <summary>Raw JSON</summary>
+          <pre id="rawJson" class="raw-json"></pre>
+        </details>
+      </section>
+    </section>
+
+    <footer class="footer">
+      <p>Data source:
+        <a id="repoLink" href="https://github.com/RaidTheory/arcraiders-data" target="_blank" rel="noopener">RaidTheory/arcraiders-data</a>
+      </p>
+      <p>Built as a static SPA — clone or deploy to GitHub Pages.</p>
+    </footer>
+  </main>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
