@@ -3,78 +3,152 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Arc Raiders Data Explorer</title>
+  <title>Arc Raiders — Tracker & Data Explorer</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-sA+e2k3kF5x8j7Y3mKxqVh3s1BDxTnqZQFjv8qv+3z0="
+    crossorigin=""/>
+
+  <!-- MarkerCluster CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+
+  <!-- Font Awesome for icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" crossorigin="anonymous" />
+
   <link rel="stylesheet" href="css/styles.css" />
   <link rel="icon" href="data:," />
 </head>
 <body>
   <header class="topbar">
-    <h1>Arc Raiders — Data Explorer</h1>
-    <p class="subtitle">Interactive viewer for items, blueprints, maps, bots, trades and skill nodes (data from RaidTheory/arcraiders-data)</p>
+    <div class="title-row">
+      <h1>Arc Raiders Tracker</h1>
+      <div class="top-actions">
+        <a class="btn" id="openRepo" href="https://github.com/RaidTheory/arcraiders-data" target="_blank" rel="noopener"><i class="fa fa-database"></i> Data Repo</a>
+        <button id="importDataBtn" class="btn"><i class="fa fa-upload"></i> Import local JSON</button>
+      </div>
+    </div>
+    <p class="subtitle">Interactive map, questline viewer, and data explorer for Arc Raiders (uses RaidTheory/arcraiders-data)</p>
   </header>
 
-  <main class="container">
-    <section class="controls">
-      <label for="dataset">Dataset</label>
-      <select id="dataset" aria-label="Select dataset">
-        <option value="projects.json">projects (items & blueprints)</option>
-        <option value="bots.json">bots</option>
-        <option value="trades.json">trades</option>
-        <option value="maps.json">maps</option>
-        <option value="skillNodes.json">skillNodes</option>
-      </select>
+  <main class="app">
+    <aside class="sidebar">
+      <div class="panel">
+        <label for="datasetSelect">Dataset</label>
+        <select id="datasetSelect" aria-label="Select dataset">
+          <option value="projects.json">projects (items & blueprints)</option>
+          <option value="bots.json">bots</option>
+          <option value="trades.json">trades</option>
+          <option value="maps.json">maps</option>
+          <option value="skillNodes.json">skill nodes</option>
+        </select>
 
-      <label for="search">Search</label>
-      <input id="search" placeholder="Search by name or id" />
+        <label for="searchInput">Search</label>
+        <input id="searchInput" placeholder="Search by name, id, tag..." />
 
-      <label for="filterType">Filter key/value (optional)</label>
-      <input id="filterKey" placeholder="key (e.g. rarity, tier, category)" />
-      <input id="filterValue" placeholder="value (e.g. common)" />
+        <label for="typeFilter">Type / Category</label>
+        <input id="typeFilter" placeholder="e.g. weapon, blueprint, quest" />
 
-      <div class="actions">
-        <button id="reload">Reload</button>
-        <button id="clearFilters">Clear</button>
+        <div class="controls-row">
+          <button id="reloadBtn" class="btn"><i class="fa fa-sync-alt"></i> Reload</button>
+          <button id="clearBtn" class="btn muted"><i class="fa fa-eraser"></i> Clear</button>
+        </div>
+
+        <hr />
+
+        <div class="list-section">
+          <h3>Results</h3>
+          <div id="resultsCount" class="muted small">—</div>
+          <ul id="resultsList" class="results-list" role="list"></ul>
+          <div class="pagination">
+            <button id="prevBtn">&larr;</button>
+            <span id="pageIndicator">1</span>
+            <button id="nextBtn">&rarr;</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel small">
+        <h4>Map Controls</h4>
+        <div class="map-controls">
+          <button id="zoomAll" class="btn small">Zoom to markers</button>
+          <label><input type="checkbox" id="markerClusterToggle" checked /> Cluster markers</label>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h4>Questline Viewer</h4>
+        <p class="muted small">Load quest data or the app will try to detect quests in current dataset.</p>
+        <div id="questControls">
+          <button id="showQuestViewer" class="btn">Open Quest Viewer</button>
+          <div id="questHint" class="muted small" style="margin-top:8px"></div>
+        </div>
+      </div>
+
+      <div class="panel small muted small">
+        <p>Built to load live raw JSON from:
+          <a href="https://raw.githubusercontent.com/RaidTheory/arcraiders-data/main/" target="_blank">raidtheory/arcraiders-data (raw)</a>
+        </p>
+      </div>
+    </aside>
+
+    <section class="map-pane">
+      <div id="map" class="map"></div>
+
+      <div class="bottom-bar">
+        <div id="cardPreview" class="card-preview">
+          <div id="cardTitle">Select a marker or item</div>
+          <div id="cardMeta" class="muted small"></div>
+        </div>
+        <div class="view-toggle">
+          <button id="toggleGrid" class="btn small"><i class="fa fa-th-large"></i> Grid</button>
+          <button id="toggleMap" class="btn small"><i class="fa fa-map"></i> Map</button>
+        </div>
       </div>
     </section>
 
-    <section class="content">
-      <aside class="list-pane">
-        <div class="list-header">
-          <div id="datasetInfo" class="dataset-info"></div>
-          <div id="listMeta" class="list-meta"></div>
-        </div>
-        <ul id="itemsList" class="items-list" role="list"></ul>
-        <div class="pagination">
-          <button id="prevPage">Previous</button>
-          <span id="pageInfo"></span>
-          <button id="nextPage">Next</button>
-        </div>
-      </aside>
+    <aside class="detail-pane" id="detailPane">
+      <div class="detail-header">
+        <h2 id="detailTitle">No item selected</h2>
+        <div id="detailActions"></div>
+      </div>
 
-      <section class="detail-pane" id="detailPane">
-        <div class="detail-header">
-          <h2 id="detailTitle">Select an item</h2>
-          <div id="detailLinks" class="detail-links"></div>
-        </div>
+      <div id="detailContent" class="detail-content">
+        <p class="muted">Select an item in the list or on the map to view details. The viewer will render stats, blueprint recipes, drop locations, and more when available.</p>
+      </div>
 
-        <div id="detailBody" class="detail-body">
-          <p class="hint">Choose an entry from the list to view structured details. The viewer attempts to detect stats, blueprints/recipes, locations/drops and maps.</p>
-        </div>
-
-        <details id="rawJsonPanel" class="raw-panel">
-          <summary>Raw JSON</summary>
-          <pre id="rawJson" class="raw-json"></pre>
-        </details>
-      </section>
-    </section>
-
-    <footer class="footer">
-      <p>Data source:
-        <a id="repoLink" href="https://github.com/RaidTheory/arcraiders-data" target="_blank" rel="noopener">RaidTheory/arcraiders-data</a>
-      </p>
-      <p>Built as a static SPA — clone or deploy to GitHub Pages.</p>
-    </footer>
+      <details id="rawDataPanel" class="raw-panel">
+        <summary><i class="fa fa-code"></i> Raw JSON</summary>
+        <pre id="rawData" class="raw-json"></pre>
+      </details>
+    </aside>
   </main>
+
+  <!-- Quest viewer modal -->
+  <div id="questModal" class="modal" aria-hidden="true">
+    <div class="modal-content">
+      <button class="modal-close" id="closeQuestModal"><i class="fa fa-times"></i></button>
+      <h3>Questline Viewer</h3>
+      <div id="questArea">
+        <p class="muted">Attempting to detect quests in the loaded datasets...</p>
+      </div>
+      <div class="modal-footer">
+        <button id="importQuestsBtn" class="btn"><i class="fa fa-upload"></i> Import Quest JSON</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hidden file input for import -->
+  <input type="file" id="fileInput" accept=".json" style="display:none" />
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-oQls4w6Gk0kXo99rZk+6G1m0q3K5sQxQe3pY6r8m+9A="
+    crossorigin=""></script>
+
+  <!-- MarkerCluster JS -->
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
   <script src="js/app.js"></script>
 </body>

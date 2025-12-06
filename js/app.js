@@ -1,305 +1,442 @@
-// Complete app.js for Arc Raiders Data Explorer
-// This script fetches JSON files from the RaidTheory/arcraiders-data repo and renders an interactive viewer.
+/* Full client-side app for Arc Raiders Tracker */
+/* Loads data from RaidTheory/arcraiders-data raw files, renders map markers,
+   results list, detailed item view, and a questline viewer. */
 
 const RAW_BASE = 'https://raw.githubusercontent.com/RaidTheory/arcraiders-data/main/';
 
-const state = {
-  datasetFile: 'projects.json',
+const DOM = {
+  datasetSelect: document.getElementById('datasetSelect'),
+  searchInput: document.getElementById('searchInput'),
+  typeFilter: document.getElementById('typeFilter'),
+  reloadBtn: document.getElementById('reloadBtn'),
+  clearBtn: document.getElementById('clearBtn'),
+  resultsList: document.getElementById('resultsList'),
+  resultsCount: document.getElementById('resultsCount'),
+  prevBtn: document.getElementById('prevBtn'),
+  nextBtn: document.getElementById('nextBtn'),
+  pageIndicator: document.getElementById('pageIndicator'),
+  mapElement: document.getElementById('map'),
+  cardTitle: document.getElementById('cardTitle'),
+  cardMeta: document.getElementById('cardMeta'),
+  detailTitle: document.getElementById('detailTitle'),
+  detailContent: document.getElementById('detailContent'),
+  rawData: document.getElementById('rawData'),
+  importDataBtn: document.getElementById('importDataBtn'),
+  fileInput: document.getElementById('fileInput'),
+  openRepo: document.getElementById('openRepo'),
+  showQuestViewerBtn: document.getElementById('showQuestViewer'),
+  questModal: document.getElementById('questModal'),
+  questArea: document.getElementById('questArea'),
+  closeQuestModal: document.getElementById('closeQuestModal'),
+  importQuestsBtn: document.getElementById('importQuestsBtn'),
+  markerClusterToggle: document.getElementById('markerClusterToggle'),
+  zoomAllBtn: document.getElementById('zoomAll'),
+  toggleGridBtn: document.getElementById('toggleGrid'),
+  toggleMapBtn: document.getElementById('toggleMap')
+};
+
+let state = {
+  datasetFile: DOM.datasetSelect.value,
   rawData: null,
   items: [],
+  filtered: [],
   page: 1,
-  pageSize: 40,
-  filteredItems: [],
-  selectedItem: null
+  pageSize: 30,
+  selected: null,
+  markers: [],
+  mapsIndex: null,
+  quests: null
 };
 
-const els = {
-  dataset: document.getElementById('dataset'),
-  search: document.getElementById('search'),
-  filterKey: document.getElementById('filterKey'),
-  filterValue: document.getElementById('filterValue'),
-  reload: document.getElementById('reload'),
-  clearFilters: document.getElementById('clearFilters'),
-  itemsList: document.getElementById('itemsList'),
-  detailPane: document.getElementById('detailPane'),
-  detailTitle: document.getElementById('detailTitle'),
-  detailBody: document.getElementById('detailBody'),
-  rawJson: document.getElementById('rawJson'),
-  datasetInfo: document.getElementById('datasetInfo'),
-  listMeta: document.getElementById('listMeta'),
-  prevPage: document.getElementById('prevPage'),
-  nextPage: document.getElementById('nextPage'),
-  pageInfo: document.getElementById('pageInfo'),
-  repoLink: document.getElementById('repoLink'),
-  detailLinks: document.getElementById('detailLinks')
-};
+// Initialize map
+const map = L.map('map', { zoomControl: true, preferCanvas: true }).setView([0, 0], 2);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
 
-function init() {
-  // wire events
-  els.dataset.addEventListener('change', onDatasetChange);
-  els.search.addEventListener('input', applyFilters);
-  els.filterKey.addEventListener('input', applyFilters);
-  els.filterValue.addEventListener('input', applyFilters);
-  els.reload.addEventListener('click', () => loadDataset(true));
-  els.clearFilters.addEventListener('click', clearFilters);
-  els.prevPage.addEventListener('click', () => changePage(-1));
-  els.nextPage.addEventListener('click', () => changePage(1));
-
-  // initial load
-  loadDataset();
+let markersLayer = L.layerGroup().addTo(map);
+let markerCluster = L.markerClusterGroup();
+if (DOM.markerClusterToggle.checked) {
+  markersLayer = markerCluster;
+  markerCluster.addTo(map);
 }
 
-function onDatasetChange(e) {
-  state.datasetFile = e.target.value;
-  state.page = 1;
-  loadDataset();
-}
-
-async function loadDataset(force = false) {
-  const url = RAW_BASE + state.datasetFile;
-  els.datasetInfo.textContent = `Loading ${state.datasetFile} ...`;
-  try {
-    const resp = await fetch(url, {cache: 'no-cache'});
-    if (!resp.ok) throw new Error(`Failed to fetch ${url}: ${resp.statusText}`);
-    const data = await resp.json();
-    state.rawData = data;
-    state.items = normalizeDataToArray(data);
-    state.filteredItems = state.items.slice();
-    els.datasetInfo.textContent = `${state.datasetFile} — ${state.items.length.toLocaleString()} entries`;
-    state.page = 1;
-    renderList();
-    clearSelection();
-  } catch (err) {
-    els.datasetInfo.textContent = `Error loading ${state.datasetFile}: ${err.message}`;
-    state.rawData = null;
-    state.items = [];
-    state.filteredItems = [];
-    renderList();
+function setClusterEnabled(enabled) {
+  if (enabled) {
+    if (!map.hasLayer(markerCluster)) map.addLayer(markerCluster);
+  } else {
+    if (map.hasLayer(markerCluster)) map.removeLayer(markerCluster);
+    // ensure a plain LayerGroup exists for use
+    markersLayer = L.layerGroup();
+    markersLayer.addTo(map);
   }
 }
 
-function normalizeDataToArray(data) {
-  // Projects and many files are often an object keyed by id; convert to array but preserve keys where possible
+// Wire UI events
+DOM.datasetSelect.addEventListener('change', onDatasetChange);
+DOM.searchInput.addEventListener('input', applyFilters);
+DOM.typeFilter.addEventListener('input', applyFilters);
+DOM.reloadBtn.addEventListener('click', () => loadDataset(true));
+DOM.clearBtn.addEventListener('click', clearFilters);
+DOM.prevBtn.addEventListener('click', () => changePage(-1));
+DOM.nextBtn.addEventListener('click', () => changePage(1));
+DOM.importDataBtn.addEventListener('click', () => DOM.fileInput.click());
+DOM.fileInput.addEventListener('change', handleLocalFile);
+DOM.showQuestViewerBtn.addEventListener('click', openQuestModal);
+DOM.closeQuestModal.addEventListener('click', closeQuestModal);
+DOM.importQuestsBtn.addEventListener('click', () => DOM.fileInput.click());
+DOM.markerClusterToggle.addEventListener('change', (e) => {
+  setClusterEnabled(e.target.checked);
+  renderMarkers();
+});
+DOM.zoomAllBtn.addEventListener('click', zoomToMarkers);
+DOM.toggleGridBtn.addEventListener('click', () => alert('Grid view: Coming soon — will show card-grid of items.'));
+DOM.toggleMapBtn.addEventListener('click', () => map.invalidateSize());
+
+// Initial load
+loadDataset();
+
+async function loadDataset(force = false) {
+  const file = DOM.datasetSelect.value;
+  state.datasetFile = file;
+  DOM.resultsCount.textContent = `Loading ${file}...`;
+  try {
+    const res = await fetch(RAW_BASE + file, { cache: 'no-cache' });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    const json = await res.json();
+    state.rawData = json;
+    state.items = normalizeToArray(json);
+    state.filtered = state.items.slice();
+    state.page = 1;
+    DOM.resultsCount.textContent = `${state.items.length.toLocaleString()} entries`;
+    // prefetch maps.json for map meta
+    if (!state.mapsIndex) {
+      try {
+        const mapsRes = await fetch(RAW_BASE + 'maps.json');
+        if (mapsRes.ok) {
+          const mapsJson = await mapsRes.json();
+          state.mapsIndex = normalizeToArray(mapsJson);
+        }
+      } catch (e) { /* ignore */ }
+    }
+    renderList();
+    renderMarkers();
+    clearDetail();
+  } catch (err) {
+    DOM.resultsCount.textContent = `Failed to load ${file}: ${err.message}`;
+    state.rawData = null;
+    state.items = [];
+    state.filtered = [];
+    renderList();
+    renderMarkers();
+  }
+}
+
+function normalizeToArray(data) {
   if (Array.isArray(data)) return data;
   if (data && typeof data === 'object') {
-    // If object with numeric keys or named keys, produce array with { _key, ...value}
     return Object.entries(data).map(([k, v]) => {
       if (v && typeof v === 'object') {
-        return Object.assign({_key: k}, v);
+        return Object.assign({ _key: k }, v);
       }
-      // primitive -> wrap
-      return {_key: k, value: v};
+      return { _key: k, value: v };
     });
   }
   return [];
 }
 
 function applyFilters() {
-  const q = (els.search.value || '').trim().toLowerCase();
-  const fk = (els.filterKey.value || '').trim();
-  const fv = (els.filterValue.value || '').trim().toLowerCase();
-
-  state.filteredItems = state.items.filter(item => {
-    // search by name or id or key
-    const candidate = (getBestTitle(item) + ' ' + (item._key || '') + ' ' + JSON.stringify(item)).toLowerCase();
-    if (q && !candidate.includes(q)) return false;
-
-    if (fk && fv) {
-      const val = deepFind(item, fk);
-      if (val === undefined || String(val).toLowerCase().indexOf(fv) === -1) return false;
+  const q = (DOM.searchInput.value || '').trim().toLowerCase();
+  const t = (DOM.typeFilter.value || '').trim().toLowerCase();
+  state.filtered = state.items.filter(it => {
+    // search in name, title, id, key or JSON
+    const title = (it.name || it.title || it.id || it._key || '').toString().toLowerCase();
+    if (q && !title.includes(q) && JSON.stringify(it).toLowerCase().indexOf(q) === -1) return false;
+    if (t) {
+      // look for type/category fields
+      const category = (it.type || it.category || it.tag || '').toString().toLowerCase();
+      if (!category.includes(t) && JSON.stringify(it).toLowerCase().indexOf(t) === -1) return false;
     }
     return true;
   });
-
   state.page = 1;
   renderList();
-}
-
-function deepFind(obj, keyPath) {
-  try {
-    const parts = keyPath.split('.');
-    let cur = obj;
-    for (const p of parts) {
-      if (!cur) return undefined;
-      cur = cur[p];
-    }
-    return cur;
-  } catch {
-    return undefined;
-  }
-}
-
-function getBestTitle(item) {
-  if (!item) return '';
-  return (item.name || item.title || item.id || item._key || item.key || '').toString();
+  renderMarkers();
 }
 
 function renderList() {
-  els.itemsList.innerHTML = '';
-  const total = state.filteredItems.length;
+  DOM.resultsList.innerHTML = '';
+  const total = state.filtered.length;
   const start = (state.page - 1) * state.pageSize;
-  const pageItems = state.filteredItems.slice(start, start + state.pageSize);
-
-  els.listMeta.textContent = `${total.toLocaleString()} entries`;
-  els.pageInfo.textContent = `Page ${state.page} — showing ${Math.min(total, start + 1)}–${Math.min(total, start + pageItems.length)} of ${total}`;
-
+  const pageItems = state.filtered.slice(start, start + state.pageSize);
+  DOM.pageIndicator.textContent = `Page ${state.page} — ${start + 1}–${Math.min(total, start + pageItems.length)} of ${total}`;
   if (total === 0) {
-    els.itemsList.innerHTML = '<li class="empty">No items</li>';
+    const li = document.createElement('li');
+    li.className = 'muted';
+    li.textContent = 'No results';
+    DOM.resultsList.appendChild(li);
     return;
   }
-
-  for (const it of pageItems) {
+  for (const item of pageItems) {
     const li = document.createElement('li');
-    li.className = 'item-row';
-    li.tabIndex = 0;
-    const title = getBestTitle(it) || '(no title)';
-    li.innerHTML = `<span class="item-title">${escapeHtml(title)}</span>
-                    <span class="item-key">${escapeHtml(it._key || it.id || '')}</span>`;
-    li.addEventListener('click', () => showDetail(it));
-    li.addEventListener('keypress', (e) => { if (e.key === 'Enter') showDetail(it); });
-    els.itemsList.appendChild(li);
+    const name = item.name || item.title || item.id || item._key || '(untitled)';
+    li.innerHTML = `<div><strong>${escapeHtml(name)}</strong><div class="small muted">${escapeHtml(item._key || '')}</div></div>`;
+    li.addEventListener('click', () => showDetail(item));
+    DOM.resultsList.appendChild(li);
   }
 }
 
 function changePage(delta) {
-  const totalPages = Math.max(1, Math.ceil(state.filteredItems.length / state.pageSize));
+  const totalPages = Math.max(1, Math.ceil(state.filtered.length / state.pageSize));
   state.page = Math.min(totalPages, Math.max(1, state.page + delta));
   renderList();
 }
 
+function clearFilters() {
+  DOM.searchInput.value = '';
+  DOM.typeFilter.value = '';
+  state.filtered = state.items.slice();
+  state.page = 1;
+  renderList();
+  renderMarkers();
+}
+
 function showDetail(item) {
-  state.selectedItem = item;
-  els.detailTitle.textContent = getBestTitle(item) || (item._key || 'Unknown item');
-  els.rawJson.textContent = JSON.stringify(item, null, 2);
-  els.detailLinks.innerHTML = '';
+  state.selected = item;
+  DOM.detailTitle.textContent = item.name || item.title || item._key || (item.id || 'Item');
+  DOM.rawData.textContent = JSON.stringify(item, null, 2);
+  DOM.detailContent.innerHTML = '';
+  DOM.cardTitle.textContent = item.name || item.title || item._key || 'Selected';
 
-  // add link to raw entry on GitHub (best-effort)
-  if (item._key) {
-    const rawUrl = `https://github.com/RaidTheory/arcraiders-data/blob/main/${state.datasetFile}`;
-    const direct = document.createElement('a');
-    direct.href = rawUrl;
-    direct.target = '_blank';
-    direct.rel = 'noopener';
-    direct.textContent = 'Open dataset on GitHub';
-    els.detailLinks.appendChild(direct);
-  }
-
-  // Clear detail body and build structured sections
-  const container = document.createElement('div');
-  container.className = 'detail-structured';
-
-  // 1) Basic info table (id/key, category, tier, rarity)
-  const basic = buildBasicInfoTable(item);
-  if (basic) container.appendChild(basic);
-
-  // 2) Stats table
-  const stats = buildStatsSection(item);
-  if (stats) container.appendChild(stats);
-
-  // 3) Blueprint / recipe
-  const bp = buildBlueprintSection(item);
-  if (bp) container.appendChild(bp);
-
-  // 4) Drops / locations / spawn info
-  const drops = buildLocationsSection(item);
-  if (drops) container.appendChild(drops);
-
-  // 5) Map representation (if maps data is loaded into rawData and item references a map)
-  const mapSection = buildMapReferenceSection(item);
-  if (mapSection) container.appendChild(mapSection);
-
-  // 6) Fallback: show entire object keys for further exploration
-  const keysDiv = document.createElement('div');
-  keysDiv.className = 'section';
-  keysDiv.innerHTML = `<h3>Fields</h3><p class="muted">Top-level keys on this entry: ${Object.keys(item).join(', ')}</p>`;
-  container.appendChild(keysDiv);
-
-  els.detailBody.innerHTML = '';
-  els.detailBody.appendChild(container);
-  // open the raw panel (not expanded automatically; user can toggle)
-  // scroll to top of detail pane
-  els.detailPane.scrollIntoView({behavior: 'smooth'});
-}
-
-function clearSelection() {
-  state.selectedItem = null;
-  els.detailTitle.textContent = 'Select an item';
-  els.rawJson.textContent = '';
-  els.detailBody.innerHTML = '<p class="hint">Choose an entry from the list to view structured details. The viewer attempts to detect stats, blueprints/recipes, locations/drops and maps.</p>';
-  els.detailLinks.innerHTML = '';
-}
-
-/* Build helper sections --------------------------------- */
-
-function buildBasicInfoTable(item) {
-  const keys = ['id', 'name', 'title', '_key', 'category', 'type', 'rarity', 'tier', 'level', 'quality'];
-  const present = keys.filter(k => deepFind(item, k) !== undefined);
-  if (present.length === 0) return null;
-  const div = document.createElement('div');
-  div.className = 'section';
-  div.innerHTML = '<h3>Basic Info</h3>';
+  // basic info
+  const basic = document.createElement('div');
+  basic.className = 'section';
+  basic.innerHTML = '<h3>Basic</h3>';
   const table = document.createElement('table');
   table.className = 'info-table';
-  for (const k of present) {
-    const tr = document.createElement('tr');
-    const td1 = document.createElement('td');
-    td1.className = 'key';
-    td1.textContent = k;
-    const td2 = document.createElement('td');
-    td2.className = 'value';
-    td2.textContent = String(deepFind(item, k));
-    tr.appendChild(td1);
-    tr.appendChild(td2);
-    table.appendChild(tr);
+  const fields = ['_key', 'id', 'name', 'title', 'type', 'category', 'rarity', 'tier', 'level'];
+  for (const f of fields) {
+    const val = deepFind(item, f);
+    if (val !== undefined) {
+      const tr = document.createElement('tr');
+      const td1 = document.createElement('td'); td1.className = 'key'; td1.textContent = f;
+      const td2 = document.createElement('td'); td2.className = 'value'; td2.textContent = typeof val === 'object' ? JSON.stringify(val) : String(val);
+      tr.appendChild(td1); tr.appendChild(td2); table.appendChild(tr);
+    }
   }
-  div.appendChild(table);
-  return div;
+  basic.appendChild(table);
+  DOM.detailContent.appendChild(basic);
+
+  // stats
+  const statsSection = buildStatsSection(item);
+  if (statsSection) DOM.detailContent.appendChild(statsSection);
+
+  // blueprint
+  const bpSection = buildBlueprintSection(item);
+  if (bpSection) DOM.detailContent.appendChild(bpSection);
+
+  // drops/locations
+  const locs = buildLocationsSection(item);
+  if (locs) DOM.detailContent.appendChild(locs);
+
+  // links
+  const linkDiv = document.createElement('div');
+  linkDiv.className = 'section';
+  linkDiv.innerHTML = `<h3>Links</h3><p class="small muted">Open dataset file on GitHub: <a href="https://github.com/RaidTheory/arcraiders-data/blob/main/${state.datasetFile}" target="_blank" rel="noopener">${state.datasetFile}</a></p>`;
+  DOM.detailContent.appendChild(linkDiv);
+
+  // zoom marker if present
+  if (hasCoordinates(item)) {
+    const c = extractCoordinates(item);
+    if (c) {
+      map.panTo([c.lat, c.lng]);
+      map.setZoom(10);
+    }
+  }
 }
 
+function clearDetail() {
+  state.selected = null;
+  DOM.detailTitle.textContent = 'No item selected';
+  DOM.detailContent.innerHTML = '<p class="muted">Select an item in the list or on the map to view details.</p>';
+  DOM.rawData.textContent = '';
+  DOM.cardTitle.textContent = 'Select a marker or item';
+  DOM.cardMeta.textContent = '';
+}
+
+/* MARKERS & MAP */
+
+function renderMarkers() {
+  // Clear existing
+  if (markerCluster && markerCluster.clearLayers) markerCluster.clearLayers();
+  markersLayer.clearLayers();
+
+  const list = state.filtered;
+  state.markers = [];
+
+  for (const item of list) {
+    const coords = extractCoordinates(item);
+    let marker = null;
+    if (coords) {
+      const icon = createIconForItem(item);
+      marker = L.marker([coords.lat, coords.lng], { icon });
+      marker.bindPopup(popupHtmlForItem(item));
+      marker.on('click', () => { showDetail(item); });
+    } else {
+      // If item references a map but no coords, try to use map center
+      const mapRef = findMapReference(item);
+      if (mapRef && state.mapsIndex) {
+        const m = findMapByRef(mapRef);
+        if (m && (m.center || m.location || m.coords)) {
+          const center = m.center || m.location || m.coords;
+          const parsed = extractCoordinates(center);
+          if (parsed) {
+            const icon = createIconForItem(item);
+            marker = L.marker([parsed.lat, parsed.lng], { icon });
+            marker.bindPopup(popupHtmlForItem(item));
+            marker.on('click', () => { showDetail(item); });
+          }
+        }
+      }
+    }
+    if (marker) {
+      state.markers.push(marker);
+      if (DOM.markerClusterToggle.checked) markerCluster.addLayer(marker);
+      else markersLayer.addLayer(marker);
+    }
+  }
+
+  // If no markers, show a gentle center
+  if (state.markers.length > 0) map.fitBounds(L.featureGroup(state.markers).getBounds().pad(0.2));
+}
+
+function popupHtmlForItem(item) {
+  const name = escapeHtml(item.name || item.title || item._key || item.id || 'Item');
+  const k = escapeHtml(item._key || item.id || '');
+  const type = escapeHtml(item.type || item.category || '');
+  return `<div style="min-width:180px"><strong>${name}</strong><div class="small muted">${k} ${type ? ' • ' + type : ''}</div><div style="margin-top:6px"><button class="btn small" onclick="window.__app_showDetailFromPopup('${encodeURIComponent(JSON.stringify(item))}')">Open</button></div></div>`;
+}
+
+// Bridge function to open from popup's inline onclick (we encode item JSON)
+window.__app_showDetailFromPopup = (encoded) => {
+  try {
+    const item = JSON.parse(decodeURIComponent(encoded));
+    showDetail(item);
+  } catch (e) { console.warn('failed to open popup item', e); }
+};
+
+function createIconForItem(item) {
+  // Use different colors for weapon, blueprint, quest, map features, default
+  const type = (item.type || item.category || '').toString().toLowerCase();
+  let color = '#6fb3ff';
+  if (type.includes('weapon')) color = '#ff8a8a';
+  if (type.includes('blueprint') || type.includes('recipe') || type.includes('project')) color = '#ffd26b';
+  if (type.includes('quest')) color = '#9b6bff';
+  if (type.includes('bot')) color = '#7ee7b7';
+  const svg = encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30"><circle cx="15" cy="15" r="10" fill="${color}" stroke="#ffffff" stroke-opacity="0.18" stroke-width="2"/></svg>`);
+  return L.icon({
+    iconUrl: `data:image/svg+xml;utf8,${svg}`,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
+    popupAnchor: [0, -15]
+  });
+}
+
+/* COORDINATE EXTRACTION HEURISTICS */
+
+function hasCoordinates(obj) {
+  return !!extractCoordinates(obj);
+}
+
+function extractCoordinates(obj) {
+  if (!obj) return null;
+  // If obj itself has lat/lng
+  if (typeof obj.lat === 'number' && typeof obj.lng === 'number') return { lat: obj.lat, lng: obj.lng };
+  if (typeof obj.latitude === 'number' && typeof obj.longitude === 'number') return { lat: obj.latitude, lng: obj.longitude };
+  if (typeof obj.x === 'number' && typeof obj.y === 'number') return { lat: obj.y, lng: obj.x }; // assume x=lng, y=lat
+  // If obj has coords array like [x,y] or [lat,lng]
+  if (Array.isArray(obj) && obj.length >= 2 && typeof obj[0] === 'number' && typeof obj[1] === 'number') {
+    return { lat: obj[1], lng: obj[0] };
+  }
+  // If the top-level item has position/coords fields
+  const paths = ['position', 'pos', 'coords', 'location', 'spawn'];
+  for (const p of paths) {
+    const v = deepFind(obj, p);
+    if (v) {
+      const parsed = extractCoordinates(v);
+      if (parsed) return parsed;
+    }
+  }
+  // Some items may use 'mapX' 'mapY' or 'x','y'
+  if (obj.mapX !== undefined && obj.mapY !== undefined) {
+    return { lat: obj.mapY, lng: obj.mapX };
+  }
+  if (obj.x !== undefined && obj.y !== undefined && typeof obj.x === 'number' && typeof obj.y === 'number') {
+    return { lat: obj.y, lng: obj.x };
+  }
+  // If object contains nested fields with coords as strings like "12.34,56.78"
+  for (const k of Object.keys(obj)) {
+    const val = obj[k];
+    if (typeof val === 'string' && val.includes(',') && val.split(',').length === 2) {
+      const parts = val.split(',').map(s => parseFloat(s.trim())).filter(n => !Number.isNaN(n));
+      if (parts.length === 2) return { lat: parts[0], lng: parts[1] };
+    }
+  }
+  return null;
+}
+
+/* MAP LOOKUP HELPERS */
+
+function findMapReference(item) {
+  const keys = ['map', 'mapId', 'mapName', 'zone', 'area', 'locationMap'];
+  for (const k of keys) {
+    const v = deepFind(item, k);
+    if (v) return v;
+  }
+  return null;
+}
+
+function findMapByRef(ref) {
+  if (!state.mapsIndex) return null;
+  const r = String(ref).toLowerCase();
+  return state.mapsIndex.find(m => (m.name && String(m.name).toLowerCase() === r) || (m.id && String(m.id).toLowerCase() === r) || (m.key && String(m.key).toLowerCase() === r));
+}
+
+/* STATS, BLUEPRINTS, LOCATIONS RENDERERS */
+
 function buildStatsSection(item) {
-  // Common patterns: 'stats', 'attributes', 'properties', 'modifiers'
-  const candidates = ['stats', 'attributes', 'properties', 'modifiers', 'statList'];
-  let statsObj = null;
+  const candidates = ['stats', 'attributes', 'properties', 'modifiers'];
+  let stats = null;
   for (const c of candidates) {
     const v = deepFind(item, c);
     if (v && typeof v === 'object') {
-      statsObj = v;
+      stats = v;
       break;
     }
   }
-  // Also sometimes top-level numeric fields exist, collect numeric top-level props
-  const numericTopLevel = Object.entries(item)
-    .filter(([k, v]) => (typeof v === 'number'))
-    .reduce((acc, [k, v]) => { acc[k] = v; return acc; }, {});
-  if (!statsObj && Object.keys(numericTopLevel).length === 0) return null;
-
-  const div = document.createElement('div');
-  div.className = 'section';
-  div.innerHTML = '<h3>Stats</h3>';
-
-  const table = document.createElement('table');
-  table.className = 'stats-table';
-
-  const statsToShow = statsObj && typeof statsObj === 'object' ? statsObj : numericTopLevel;
-  // If statsToShow is an array, convert to object
-  const finalStats = Array.isArray(statsToShow) ? arrayToKeyValue(statsToShow) : statsToShow;
-
-  for (const [k, v] of Object.entries(finalStats)) {
+  // Also include numeric top-level props
+  const numeric = Object.entries(item).filter(([k, v]) => typeof v === 'number').reduce((acc, [k, v]) => { acc[k] = v; return acc; }, {});
+  if (!stats && Object.keys(numeric).length === 0) return null;
+  const sec = document.createElement('div'); sec.className = 'section'; sec.innerHTML = '<h3>Stats</h3>';
+  const table = document.createElement('table'); table.className = 'stats-table';
+  const target = stats || numeric;
+  const entries = Array.isArray(target) ? arrayToKeyValue(target) : target;
+  for (const [k, v] of Object.entries(entries)) {
     const tr = document.createElement('tr');
     const td1 = document.createElement('td'); td1.className = 'key'; td1.textContent = k;
-    const td2 = document.createElement('td'); td2.className = 'value'; td2.textContent = typeof v === 'object' ? JSON.stringify(v) : v;
-    tr.appendChild(td1); tr.appendChild(td2);
-    table.appendChild(tr);
+    const td2 = document.createElement('td'); td2.className = 'value'; td2.textContent = typeof v === 'object' ? JSON.stringify(v) : String(v);
+    tr.appendChild(td1); tr.appendChild(td2); table.appendChild(tr);
   }
-  div.appendChild(table);
-  return div;
+  sec.appendChild(table);
+  return sec;
 }
 
 function arrayToKeyValue(arr) {
   const out = {};
   for (const el of arr) {
     if (el && typeof el === 'object') {
-      if (el.name && (el.value !== undefined)) out[el.name] = el.value;
+      if (el.name && el.value !== undefined) out[el.name] = el.value;
       else {
         const k = Object.keys(el)[0];
         out[k] = el[k];
@@ -310,30 +447,21 @@ function arrayToKeyValue(arr) {
 }
 
 function buildBlueprintSection(item) {
-  // Common keys for recipe/blueprint: 'blueprint', 'recipe', 'ingredients', 'materials', 'requires'
-  const keys = ['blueprint', 'recipe', 'ingredients', 'materials', 'requires', 'requirements'];
+  const keys = ['blueprint', 'recipe', 'ingredients', 'materials', 'requires', 'requirements', 'components'];
   for (const k of keys) {
     const v = deepFind(item, k);
     if (v && (Array.isArray(v) || typeof v === 'object')) {
-      const div = document.createElement('div');
-      div.className = 'section';
-      div.innerHTML = `<h3>Blueprint / Recipe (${k})</h3>`;
-      const list = document.createElement('ul');
-      list.className = 'bp-list';
-
-      // v might be an object with counts or an array of entries
+      const sec = document.createElement('div'); sec.className = 'section'; sec.innerHTML = `<h3>Blueprint / Recipe — ${k}</h3>`;
+      const ul = document.createElement('ul'); ul.className = 'small';
       if (Array.isArray(v)) {
-        for (const el of v) {
-          list.appendChild(bpListItem(el));
-        }
-      } else if (typeof v === 'object') {
-        // If object keys -> quantity
+        for (const el of v) ul.appendChild(bpListItem(el));
+      } else {
         for (const [name, qty] of Object.entries(v)) {
-          list.appendChild(bpListItem({name, qty}));
+          const li = document.createElement('li'); li.textContent = `${qty} × ${name}`; ul.appendChild(li);
         }
       }
-      div.appendChild(list);
-      return div;
+      sec.appendChild(ul);
+      return sec;
     }
   }
   return null;
@@ -341,27 +469,21 @@ function buildBlueprintSection(item) {
 
 function bpListItem(el) {
   const li = document.createElement('li');
-  let name = '';
-  let qty = '';
-  if (el && typeof el === 'object') {
-    name = el.name || el.id || el.item || Object.keys(el)[0];
-    qty = el.qty || el.quantity || el.count || el.q || el[Object.keys(el)[0]] || '';
-  } else {
-    name = String(el);
-  }
-  li.textContent = `${qty ? qty + ' × ' : ''}${name}`;
+  if (typeof el === 'string') li.textContent = el;
+  else if (el && typeof el === 'object') {
+    const name = el.name || el.id || el.item || Object.keys(el)[0];
+    const qty = el.qty || el.count || el.quantity || el.q || el.amount || '';
+    li.textContent = `${qty ? qty + '× ' : ''}${name}`;
+  } else li.textContent = String(el);
   return li;
 }
 
 function buildLocationsSection(item) {
-  // Look for 'drops', 'locations', 'spawnLocations', 'spawn', 'foundIn', 'droppedBy'
   const keys = ['drops', 'locations', 'spawnLocations', 'spawn', 'foundIn', 'droppedBy', 'loot', 'lootTable', 'dropLocations'];
   for (const k of keys) {
     const v = deepFind(item, k);
     if (v) {
-      const div = document.createElement('div');
-      div.className = 'section';
-      div.innerHTML = `<h3>Locations / Drops (${k})</h3>`;
+      const sec = document.createElement('div'); sec.className = 'section'; sec.innerHTML = `<h3>Locations / Drops (${k})</h3>`;
       if (Array.isArray(v)) {
         const ul = document.createElement('ul');
         for (const el of v) {
@@ -369,86 +491,127 @@ function buildLocationsSection(item) {
           li.textContent = typeof el === 'object' ? JSON.stringify(el) : String(el);
           ul.appendChild(li);
         }
-        div.appendChild(ul);
+        sec.appendChild(ul);
       } else if (typeof v === 'object') {
-        const pre = document.createElement('pre');
-        pre.textContent = JSON.stringify(v, null, 2);
-        div.appendChild(pre);
+        const pre = document.createElement('pre'); pre.textContent = JSON.stringify(v, null, 2); sec.appendChild(pre);
       } else {
-        const p = document.createElement('p');
-        p.textContent = String(v);
-        div.appendChild(p);
+        const p = document.createElement('p'); p.textContent = String(v); sec.appendChild(p);
       }
-      return div;
+      return sec;
     }
   }
   return null;
 }
 
-function buildMapReferenceSection(item) {
-  // If an item references a map id or coordinates, try to show context by looking up maps.json (if user selected maps)
-  if (!state.rawData) return null;
-  // detect map id or mapName fields
-  const mapKeys = ['map', 'mapId', 'mapName', 'location', 'zone'];
-  for (const k of mapKeys) {
-    const v = deepFind(item, k);
-    if (v) {
-      // attempt to load maps.json if available (we don't re-fetch, rely on user dataset toggle)
-      // if the currently-loaded dataset is maps.json, use it; otherwise try to fetch maps.json separately (best-effort)
-      return buildInlineMapPreview(v);
-    }
+/* QUEST VIEWER */
+
+function openQuestModal() {
+  DOM.questModal.setAttribute('aria-hidden', 'false');
+  DOM.questArea.innerHTML = '<p class="muted">Detecting quests in loaded datasets...</p>';
+  // Try to find quests in loaded items
+  const guesses = detectQuestsInData();
+  if (guesses && guesses.length > 0) {
+    renderQuestGraph(guesses);
+  } else {
+    DOM.questArea.innerHTML = `<p class="muted">No explicit quests found in the current dataset. You can import quest JSON files using the import button.</p>`;
   }
-  return null;
 }
 
-function buildInlineMapPreview(mapRefValue) {
-  // Try to fetch maps.json once and cache
-  // We'll fetch maps.json even if not currently selected, so we can display map names and details
-  // Keep a small cache on window
-  if (!window.__mapsCachePromise) {
-    window.__mapsCachePromise = fetch(RAW_BASE + 'maps.json').then(r => r.ok ? r.json() : null).catch(() => null);
-  }
-  const div = document.createElement('div');
-  div.className = 'section';
-  div.innerHTML = `<h3>Map Reference</h3><p>Referenced: <em>${escapeHtml(String(mapRefValue))}</em></p><div id="mapPreviewArea">Loading map info…</div>`;
-  window.__mapsCachePromise.then(mapsData => {
-    const area = div.querySelector('#mapPreviewArea');
-    if (!mapsData) {
-      area.textContent = 'maps.json not available or failed to load.';
-      return;
-    }
-    // normalize to array
-    const arr = Array.isArray(mapsData) ? mapsData : Object.values(mapsData || {});
-    // Try to match by id/name
-    const match = arr.find(m => {
-      return (m.id && String(m.id) === String(mapRefValue)) ||
-             (m.name && String(m.name).toLowerCase() === String(mapRefValue).toLowerCase()) ||
-             (m.key && String(m.key) === String(mapRefValue));
-    }) || arr.find(m => String(m.name).toLowerCase().includes(String(mapRefValue).toLowerCase()));
-    if (!match) {
-      area.textContent = 'No exact map match found. Showing first few maps:';
-      const ul = document.createElement('ul');
-      for (const m of arr.slice(0, 8)) {
-        const li = document.createElement('li');
-        li.textContent = `${m.name || m.id || m.key || '(unknown)'} — ${m.description || ''}`;
-        ul.appendChild(li);
-      }
-      area.appendChild(ul);
-      return;
-    }
-    // render brief map info
-    const mdiv = document.createElement('div');
-    mdiv.className = 'map-card';
-    mdiv.innerHTML = `<strong>${escapeHtml(match.name || match.id || match.key)}</strong>
-                      <p class="muted">${escapeHtml(match.description || '')}</p>
-                      <pre>${escapeHtml(JSON.stringify(match, null, 2))}</pre>`;
-    area.innerHTML = '';
-    area.appendChild(mdiv);
+function closeQuestModal() {
+  DOM.questModal.setAttribute('aria-hidden', 'true');
+}
+
+function detectQuestsInData() {
+  // Heuristic: items with type/category 'quest' or having 'questID' or 'prerequisites'
+  const q = state.items.filter(it => {
+    const t = (it.type || it.category || '').toString().toLowerCase();
+    if (t.includes('quest')) return true;
+    if (it.questID || it.prerequisites || it.requires) return true;
+    if (it.questName || it.quest) return true;
+    return false;
   });
-  return div;
+  // Normalize into quest objects
+  const quests = q.map(it => {
+    return {
+      id: it._key || it.id || it.questID || it.key || (it.name && slugify(it.name)) || null,
+      name: it.name || it.title || it.questName || it._key || it.id || '(quest)',
+      raw: it,
+      reqs: it.prerequisites || it.requires || it.requiresQuest || []
+    };
+  }).filter(q => q.id);
+  return quests;
 }
 
-/* Utility helpers -------------------------------------- */
+function renderQuestGraph(quests) {
+  // Build adjacency: id -> quest
+  const byId = {};
+  quests.forEach(q => byId[q.id] = q);
+  // Render nodes with dependencies
+  const container = document.createElement('div');
+  container.className = 'quest-graph';
+  for (const q of quests) {
+    const node = document.createElement('div'); node.className = 'quest-node';
+    node.innerHTML = `<h4>${escapeHtml(q.name)}</h4><div class="quest-deps">ID: ${escapeHtml(q.id)}</div>`;
+    // prerequisites
+    const reqs = Array.isArray(q.reqs) ? q.reqs : (typeof q.reqs === 'string' ? [q.reqs] : []);
+    if (reqs.length) {
+      const deps = document.createElement('div'); deps.className = 'quest-deps';
+      deps.innerHTML = `<strong>Requires:</strong> ${reqs.map(r => escapeHtml(String(r))).join(', ')}`;
+      node.appendChild(deps);
+    }
+    const viewBtn = document.createElement('button'); viewBtn.className = 'btn small'; viewBtn.textContent = 'Open';
+    viewBtn.addEventListener('click', () => showDetail(q.raw));
+    node.appendChild(viewBtn);
+    container.appendChild(node);
+  }
+  DOM.questArea.innerHTML = '';
+  DOM.questArea.appendChild(container);
+  // Note: For more advanced graph visuals (arrows/flow), integrate a graph lib (D3, dagre-d3, cytoscape) — future enhancement.
+}
+
+/* FILE IMPORT HANDLING (local JSON) */
+
+function handleLocalFile(e) {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    try {
+      const json = JSON.parse(ev.target.result);
+      // If JSON looks like a dataset (array/object), allow user to merge or replace
+      if (confirm('Load this JSON into the current dataset view? (OK = replace current in-memory dataset)')) {
+        state.rawData = json;
+        state.items = normalizeToArray(json);
+        state.filtered = state.items.slice();
+        state.page = 1;
+        renderList();
+        renderMarkers();
+        clearDetail();
+        alert('Local JSON loaded into the viewer. This does not change the remote repo.');
+      }
+    } catch (err) {
+      alert('Failed to parse JSON: ' + err.message);
+    }
+  };
+  reader.readAsText(f);
+  // clear input to allow re-importing same file later
+  e.target.value = '';
+}
+
+/* UTILITIES */
+
+function deepFind(obj, path) {
+  if (!obj) return undefined;
+  if (!path) return undefined;
+  if (path.indexOf('.') === -1) return obj[path];
+  const parts = path.split('.');
+  let cur = obj;
+  for (const p of parts) {
+    if (!cur) return undefined;
+    cur = cur[p];
+  }
+  return cur;
+}
 
 function escapeHtml(s) {
   return String(s || '').replace(/[&<>"'`]/g, function (c) {
@@ -456,30 +619,52 @@ function escapeHtml(s) {
   });
 }
 
-function deepClone(v) { return JSON.parse(JSON.stringify(v)); }
-
-function buildTableFromObject(obj) {
-  const table = document.createElement('table');
-  for (const [k, v] of Object.entries(obj)) {
-    const tr = document.createElement('tr');
-    const td1 = document.createElement('td'); td1.className = 'key'; td1.textContent = k;
-    const td2 = document.createElement('td'); td2.className = 'value'; td2.textContent = typeof v === 'object' ? JSON.stringify(v) : String(v);
-    tr.appendChild(td1); tr.appendChild(td2);
-    table.appendChild(tr);
-  }
-  return table;
+function slugify(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
-function arrayShallowToObj(arr) {
+function findInArrayByKey(arr, key, value) {
+  return arr.find(a => String(a[key]) === String(value));
+}
+
+/* Zoom helper */
+function zoomToMarkers() {
+  if (!state.markers || state.markers.length === 0) {
+    alert('No markers to zoom to (try filtering to show markers).');
+    return;
+  }
+  const group = L.featureGroup(state.markers);
+  map.fitBounds(group.getBounds().pad(0.2));
+}
+
+/* Simple utility: find nested object keys with numeric property for heuristics */
+function findNumericGeoProps(obj) {
+  const keys = Object.keys(obj || {});
+  if (keys.includes('lat') && keys.includes('lng')) return {lat: obj.lat, lng: obj.lng};
+  if (keys.includes('x') && keys.includes('y')) return {lat: obj.y, lng: obj.x};
+  return null;
+}
+
+/* Basic helper to convert array of objects into key/value */
+function arrayToObj(arr) {
   const out = {};
-  for (const el of arr) {
-    if (typeof el === 'object' && el !== null) {
+  (arr || []).forEach(el => {
+    if (el && typeof el === 'object') {
       const k = el.name || el.id || Object.keys(el)[0];
-      const v = el.value || el.qty || el.quantity || el.count || el[k] || el;
+      const v = el.value || el.qty || el.count || el[k];
       out[k] = v;
     }
-  }
+  });
   return out;
 }
 
-document.addEventListener('DOMContentLoaded', init);
+/* INITIALIZE lightweight state in global for popup calls */
+window.__app_state = state;
+window.__app_showDetailFromPopup = window.__app_showDetailFromPopup;
+
+/* Utility: find nested JSON keys to attempt to create coordinates when passed map center objects */
+function tryParsePossibleCenter(obj) {
+  if (!obj) return null;
+  const v = extractCoordinates(obj);
+  return v;
+}
