@@ -315,7 +315,9 @@ function popupHtmlForItem(item) {
   const name = escapeHtml(item.name || item.title || item._key || item.id || 'Item');
   const k = escapeHtml(item._key || item.id || '');
   const type = escapeHtml(item.type || item.category || '');
-  return `<div style="min-width:180px"><strong>${name}</strong><div class="small muted">${k} ${type ? ' • ' + type : ''}</div><div style="margin-top:6px"><button class="btn small" onclick="window.__app_showDetailFromPopup('${encodeURIComponent(JSON.stringify(item))}')">Open</button></div></div>`;
+  // Use encoded JSON in popup and bridge to global function to open detail
+  const encoded = encodeURIComponent(JSON.stringify(item));
+  return `<div style="min-width:180px"><strong>${name}</strong><div class="small muted">${k} ${type ? ' • ' + type : ''}</div><div style="margin-top:6px"><button class="btn small" onclick="window.__app_showDetailFromPopup('${encoded}')">Open</button></div></div>`;
 }
 
 // Bridge function to open from popup's inline onclick (we encode item JSON)
