@@ -5,10 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Arc Raiders — Tracker & Data Explorer</title>
 
-  <!-- Leaflet CSS -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    integrity="sha256-sA+e2k3kF5x8j7Y3mKxqVh3s1BDxTnqZQFjv8qv+3z0="
-    crossorigin=""/>
+  <!-- Leaflet CSS (no integrity attribute to avoid SRI mismatch blocking) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <!-- MarkerCluster CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
@@ -142,10 +140,8 @@
   <!-- Hidden file input for import -->
   <input type="file" id="fileInput" accept=".json" style="display:none" />
 
-  <!-- Leaflet JS -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    integrity="sha256-oQls4w6Gk0kXo99rZk+6G1m0q3K5sQxQe3pY6r8m+9A="
-    crossorigin=""></script>
+  <!-- Leaflet JS (no integrity attribute) -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <!-- MarkerCluster JS -->
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
